@@ -1,11 +1,16 @@
+import datetime
+
 import requests
 from lxml import html
 
-from basketball_reference_web_scraper.data import TEAM_TO_TEAM_ABBREVIATION, TeamTotal, PlayerData
+from basketball_reference_web_scraper.data import TeamTotal, PlayerData
 from basketball_reference_web_scraper.errors import InvalidDate, InvalidPlayerAndSeason
 from basketball_reference_web_scraper.html import DailyLeadersPage, PlayerSeasonBoxScoresPage, PlayerSeasonTotalTable, \
     PlayerAdvancedSeasonTotalsTable, PlayByPlayPage, SchedulePage, BoxScoresPage, DailyBoxScoresPage, SearchPage, \
     PlayerPage, StandingsPage
+from basketball_reference_web_scraper.models.calculators import calculate_team_abbreviation
+from basketball_reference_web_scraper.serialization.urls.models import PlayByPlayURLData
+from basketball_reference_web_scraper.serialization.urls.serializers import DEFAULT_PLAY_BY_PLAY_URL_SERIALIZER
 
 
 class HTTPService:
@@ -26,7 +31,7 @@ class HTTPService:
 
         page = StandingsPage(html=html.fromstring(response.content))
         return self.parser.parse_division_standings(standings=page.division_standings.eastern_conference_table.rows) + \
-               self.parser.parse_division_standings(standings=page.division_standings.western_conference_table.rows)
+            self.parser.parse_division_standings(standings=page.division_standings.western_conference_table.rows)
 
     def player_box_scores(self, day, month, year):
         url = '{BASE_URL}/friv/dailyleaders.cgi?month={month}&day={day}&year={year}'.format(
@@ -65,7 +70,8 @@ class HTTPService:
         if page.regular_season_box_scores_table is None:
             raise InvalidPlayerAndSeason(player_identifier=player_identifier, season_end_year=season_end_year)
 
-        return self.parser.parse_player_season_box_scores(box_scores=page.regular_season_box_scores_table.rows, include_inactive_games=include_inactive_games)
+        return self.parser.parse_player_season_box_scores(box_scores=page.regular_season_box_scores_table.rows,
+                                                          include_inactive_games=include_inactive_games)
 
     def playoff_player_box_scores(self, player_identifier, season_end_year, include_inactive_games=False):
         # Makes assumption that basketball reference pattern of breaking out player pathing using first character of
@@ -86,15 +92,19 @@ class HTTPService:
         if page.playoff_box_scores_table is None:
             raise InvalidPlayerAndSeason(player_identifier=player_identifier, season_end_year=season_end_year)
 
-        return self.parser.parse_player_season_box_scores(box_scores=page.playoff_box_scores_table.rows, include_inactive_games=include_inactive_games)
+        return self.parser.parse_player_season_box_scores(box_scores=page.playoff_box_scores_table.rows,
+                                                          include_inactive_games=include_inactive_games)
 
     def play_by_play(self, home_team, day, month, year):
-        add_0_if_needed = lambda s: "0" + s if len(s) == 1 else s
-
-        # the hard-coded `0` in the url assumes we always take the first match of the given date and team.
-        url = "{BASE_URL}/boxscores/pbp/{year}{month}{day}0{team_abbr}.html".format(
-            BASE_URL=HTTPService.BASE_URL, year=year, month=add_0_if_needed(str(month)), day=add_0_if_needed(str(day)),
-            team_abbr=TEAM_TO_TEAM_ABBREVIATION[home_team]
+        try:
+            date = datetime.date(year=year, month=month, day=day)
+        except ValueError:
+            raise InvalidDate(day=day, month=month, year=year)
+        url = DEFAULT_PLAY_BY_PLAY_URL_SERIALIZER.serialize(
+            value=PlayByPlayURLData(
+                date=date,
+                team_abbreviation=calculate_team_abbreviation(team=home_team, date=date)
+            )
         )
         response = requests.get(url=url)
         response.raise_for_status()
